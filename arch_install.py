@@ -10,10 +10,55 @@ def run(cmd, shell=False, check=True):
     if isinstance(cmd, str) and not shell:
         cmd = cmd.split()
     print(f"\n--> Ejecutando: {cmd if isinstance(cmd, str) else ' '.join(cmd)}")
-    res = subprocess.run(cmd, shell=shell)
+    res = subprocess.run(
+        cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
     if check and res.returncode != 0:
-        print(f"[!] Error al ejecutar: {cmd}")
+        print(f"[!] Error al ejecutar: {cmd}\n{res.stderr}")
         sys.exit(1)
+    return res.stdout
+
+
+def detect_cpu_microcode():
+    """Detecta el fabricante del procesador e instala el microcódigo adecuado."""
+    try:
+        with open("/proc/cpuinfo", "r") as f:
+            cpu_data = f.read()
+            if "GenuineIntel" in cpu_data:
+                print("[+] CPU Intel detectada. Agregando intel-ucode.")
+                return ["intel-ucode"]
+            elif "AuthenticAMD" in cpu_data:
+                print("[+] CPU AMD detectada. Agregando amd-ucode.")
+                return ["amd-ucode"]
+    except Exception as e:
+        print(f"[!] No se pudo detectar la CPU: {e}")
+    return []
+
+
+def detect_gpu_drivers():
+    """Detecta la tarjeta gráfica instalada mediante lspci e incluye los drivers necesarios."""
+    gpu_pkgs = (
+        ["mesa", "lib32-mesa"] if os.path.exists("/etc/pacman.conf") else ["mesa"]
+    )
+    try:
+        res = subprocess.run("lspci", shell=True, stdout=subprocess.PIPE, text=True)
+        lspci_out = res.stdout.lower()
+
+        if "nvidia" in lspci_out:
+            print("[+] GPU NVIDIA detectada. Agregando controladores de NVIDIA.")
+            gpu_pkgs.extend(["nvidia", "nvidia-utils", "nvidia-settings"])
+        if "amd" in lspci_out or "radeon" in lspci_out:
+            print("[+] GPU AMD detectada. Agregando controladores Vulkan de AMD.")
+            gpu_pkgs.extend(["xf86-video-amdgpu", "vulkan-radeon"])
+        if "intel" in lspci_out:
+            print("[+] GPU Intel detectada. Agregando controladores de Intel.")
+            gpu_pkgs.extend(["intel-media-driver", "vulkan-intel"])
+    except Exception as e:
+        print(
+            f"[!] Error detectando la GPU: {e}. Se instalarán paquetes básicos de Mesa."
+        )
+
+    return list(set(gpu_pkgs))
 
 
 def ask_inputs():
@@ -125,7 +170,7 @@ def partition_and_mount(disk):
 
 
 def install_base_packages(desktop_choice):
-    """Instala el kernel, paquetes base, entorno seleccionado y herramientas de recuperación/snapshots."""
+    """Instala el kernel, paquetes base, soporte de hardware, red, fuentes y multimedia."""
     base_pkgs = [
         "base",
         "linux",
@@ -134,6 +179,10 @@ def install_base_packages(desktop_choice):
         "neovim",
         "sudo",
         "networkmanager",
+        "iwd",
+        "wpa_supplicant",
+        "modemmanager",
+        "dialog",
         "git",
         "curl",
         "wget",
@@ -157,6 +206,30 @@ def install_base_packages(desktop_choice):
         "bluez",
         "bluez-utils",
     ]
+
+    media_and_fonts = [
+        "ttf-dejavu",
+        "ttf-liberation",
+        "noto-fonts",
+        "noto-fonts-emoji",
+        "ffmpeg",
+        "gst-plugins-base",
+        "gst-plugins-good",
+        "gst-plugins-bad",
+        "gst-plugins-ugly",
+        "ntfs-3g",
+        "exfatprogs",
+        "dosfstools",
+        "unzip",
+        "p7zip",
+        "unrar",
+        "tar",
+        "gzip",
+    ]
+
+    # Detección dinámica de microcódigo y GPUs
+    ucode_pkgs = detect_cpu_microcode()
+    gpu_pkgs = detect_gpu_drivers()
 
     # Selección según el escritorio
     if desktop_choice == "1":  # GNOME
@@ -204,7 +277,16 @@ def install_base_packages(desktop_choice):
     # Herramientas Btrfs y recuperación
     boot_pkgs = ["grub", "efibootmgr", "snapper", "snap-pac"]
 
-    all_pkgs = base_pkgs + hardware_pkgs + desktop_pkgs + dev_pkgs + boot_pkgs
+    all_pkgs = (
+        base_pkgs
+        + ucode_pkgs
+        + gpu_pkgs
+        + hardware_pkgs
+        + media_and_fonts
+        + desktop_pkgs
+        + dev_pkgs
+        + boot_pkgs
+    )
 
     print("\n[+] Instalando paquetes en /mnt (esto puede demorar)...")
     run(["pacstrap", "-K", "/mnt"] + all_pkgs)
@@ -221,7 +303,6 @@ def configure_system(username, password, disk, desktop_choice):
     else:
         grub_cmd = f"grub-install --target=i386-pc {disk}"
 
-    # Determinar Display Manager según la elección
     dm_service = "gdm" if desktop_choice == "1" else "sddm"
 
     chroot_script = f"""#!/bin/bash
@@ -246,6 +327,7 @@ echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 # Habilitar Servicios del Sistema
 systemctl enable NetworkManager
+systemctl enable ModemManager
 systemctl enable {dm_service}
 systemctl enable cups
 systemctl enable bluetooth
@@ -298,7 +380,7 @@ su - {username} -c "yay -S --noconfirm grub-btrfs"
 # Habilitar el daemon de grub-btrfs para actualizar GRUB automáticamente en cada snapshot
 systemctl enable grub-btrfsd
 
-# Regenerar configuración de GRUB incorporando grub-btrfs
+# Regenerar configuración de GRUB incorporando microcódigo y grub-btrfs
 grub-mkconfig -o /boot/grub/grub.cfg
 """
 
@@ -323,7 +405,9 @@ def main():
 
     print("\n" + "=" * 60)
     print(" ¡INSTALACIÓN COMPLETADA CON ÉXITO!")
-    print(" Sistema listo con Snapshots automáticas Btrfs y menú en GRUB.")
+    print(
+        " Sistema completo instalado con soporte multimedia, red, drivers y snapshots Btrfs."
+    )
     print(" Puedes desmontar la partición y reiniciar con: umount -R /mnt && reboot")
     print("=" * 60)
 
