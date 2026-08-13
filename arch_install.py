@@ -19,6 +19,26 @@ def run(cmd, shell=False, check=True):
     return res.stdout
 
 
+def enable_multilib():
+    """Habilita el repositorio multilib en el pacman.conf actual si no está activo."""
+    print("\n[+] Habilitando repositorio multilib...")
+    try:
+        with open("/etc/pacman.conf", "r") as f:
+            content = f.read()
+
+        if "[multilib]" not in content or "#[multilib]" in content:
+            # Descomentar el bloque multilib
+            new_content = content.replace("#[multilib]", "[multilib]").replace(
+                "#Include = /etc/pacman.d/mirrorlist",
+                "Include = /etc/pacman.d/mirrorlist",
+            )
+            with open("/etc/pacman.conf", "w") as f:
+                f.write(new_content)
+            run("pacman -Sy")
+    except Exception as e:
+        print(f"[!] Advertencia al intentar habilitar multilib: {e}")
+
+
 def detect_cpu_microcode():
     """Detecta el fabricante del procesador e instala el microcódigo adecuado."""
     try:
@@ -37,22 +57,26 @@ def detect_cpu_microcode():
 
 def detect_gpu_drivers():
     """Detecta la tarjeta gráfica instalada mediante lspci e incluye los drivers necesarios."""
-    gpu_pkgs = (
-        ["mesa", "lib32-mesa"] if os.path.exists("/etc/pacman.conf") else ["mesa"]
-    )
+    gpu_pkgs = ["mesa", "lib32-mesa"]
     try:
         res = subprocess.run("lspci", shell=True, stdout=subprocess.PIPE, text=True)
         lspci_out = res.stdout.lower()
 
         if "nvidia" in lspci_out:
             print("[+] GPU NVIDIA detectada. Agregando controladores de NVIDIA.")
-            gpu_pkgs.extend(["nvidia", "nvidia-utils", "nvidia-settings"])
+            gpu_pkgs.extend(
+                ["nvidia", "nvidia-utils", "nvidia-settings", "lib32-nvidia-utils"]
+            )
         if "amd" in lspci_out or "radeon" in lspci_out:
             print("[+] GPU AMD detectada. Agregando controladores Vulkan de AMD.")
-            gpu_pkgs.extend(["xf86-video-amdgpu", "vulkan-radeon"])
+            gpu_pkgs.extend(
+                ["xf86-video-amdgpu", "vulkan-radeon", "lib32-vulkan-radeon"]
+            )
         if "intel" in lspci_out:
             print("[+] GPU Intel detectada. Agregando controladores de Intel.")
-            gpu_pkgs.extend(["intel-media-driver", "vulkan-intel"])
+            gpu_pkgs.extend(
+                ["intel-media-driver", "vulkan-intel", "lib32-vulkan-intel"]
+            )
     except Exception as e:
         print(
             f"[!] Error detectando la GPU: {e}. Se instalarán paquetes básicos de Mesa."
@@ -171,6 +195,8 @@ def partition_and_mount(disk):
 
 def install_base_packages(desktop_choice):
     """Instala el kernel, paquetes base, soporte de hardware, red, fuentes y multimedia."""
+    enable_multilib()
+
     base_pkgs = [
         "base",
         "linux",
@@ -308,6 +334,11 @@ def configure_system(username, password, disk, desktop_choice):
 
     chroot_script = f"""#!/bin/bash
 set -e
+
+# Habilitar multilib en el sistema objetivo
+sed -i 's/#\\[multilib\\]/[multilib]/' /etc/pacman.conf
+sed -i '/\\[multilib\\]/{{n;s/#Include = \\/etc\\/pacman.d\\/mirrorlist/Include = \\/etc\\/pacman.d\\/mirrorlist/}}' /etc/pacman.conf
+pacman -Sy
 
 # Configuración Horaria y Localización
 ln -sf /usr/share/zoneinfo/America/Argentina/Cordoba /etc/localtime
