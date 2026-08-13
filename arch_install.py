@@ -182,6 +182,7 @@ def install_base_packages(desktop_choice):
         "iwd",
         "wpa_supplicant",
         "modemmanager",
+        "rfkill",
         "dialog",
         "git",
         "curl",
@@ -317,6 +318,18 @@ locale-gen
 echo "LANG=es_AR.UTF-8" > /etc/locale.conf
 echo "arch-system" > /etc/hostname
 
+# Configuración del Teclado en Latinoamericano (TTY y Entorno Gráfico)
+echo "KEYMAP=la-latin1" > /etc/vconsole.conf
+
+mkdir -p /etc/X11/xorg.conf.d
+cat << 'EOF' > /etc/X11/xorg.conf.d/00-keyboard.conf
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "latam"
+EndSection
+EOF
+
 # Configuración de usuarios
 echo "root:{password}" | chpasswd
 useradd -m -G wheel,docker,lp,scanner -s /bin/bash {username}
@@ -332,6 +345,10 @@ systemctl enable {dm_service}
 systemctl enable cups
 systemctl enable bluetooth
 systemctl enable docker
+
+# Desbloqueo por software de adaptadores de radio (Bluetooth / Wi-Fi)
+rfkill unblock bluetooth || true
+rfkill unblock wlan || true
 
 # Instalación Dinámica de GRUB (EFI o BIOS)
 {grub_cmd}
