@@ -27,7 +27,6 @@ def enable_multilib():
             content = f.read()
 
         if "[multilib]" not in content or "#[multilib]" in content:
-            # Descomentar el bloque multilib
             new_content = content.replace("#[multilib]", "[multilib]").replace(
                 "#Include = /etc/pacman.d/mirrorlist",
                 "Include = /etc/pacman.d/mirrorlist",
@@ -85,23 +84,43 @@ def detect_gpu_drivers():
     return list(set(gpu_pkgs))
 
 
+def check_cancel(val):
+    """Cancela la ejecución si el usuario lo solicita explícitamente."""
+    if val.lower() in ["c", "cancelar"]:
+        print("\n[!] Instalación cancelada por el usuario.")
+        sys.exit(0)
+
+
 def ask_inputs():
-    """Solicita los datos del usuario para la instalación."""
+    """Solicita los datos del usuario para la instalación validando que no haya campos vacíos."""
     print("=" * 60)
     print("  INSTALADOR AUTOMÁTICO DE ARCH LINUX + BTRFS + SNAPSHOTS")
     print("=" * 60)
+    print("(Escribe 'c' o 'cancelar' en cualquier momento para salir)")
+    print("-" * 60)
 
-    # Mostrar discos y particiones disponibles claramente
+    # Mostrar discos y particiones disponibles
     print(run("lsblk -o NAME,SIZE,TYPE,FSTYPE,MODEL"))
     print("-" * 60)
 
-    disk = input("Ingresa el disco a formatear (ejemplo: sda, nvme0n1, vda): ").strip()
-    if not disk.startswith("/dev/"):
-        disk = f"/dev/{disk}"
+    # Validar entrada del disco
+    while True:
+        raw_disk = input(
+            "Ingresa el disco a formatear (ejemplo: sda, nvme0n1, vda): "
+        ).strip()
+        check_cancel(raw_disk)
 
-    if not os.path.exists(disk):
-        print(f"[!] El disco {disk} no existe.")
-        sys.exit(1)
+        if not raw_disk:
+            print("[!] El nombre del disco no puede estar vacío. Intenta de nuevo.")
+            continue
+
+        disk = raw_disk if raw_disk.startswith("/dev/") else f"/dev/{raw_disk}"
+
+        if not os.path.exists(disk):
+            print(f"[!] El disco {disk} no existe en el sistema. Intenta de nuevo.")
+            continue
+
+        break
 
     print("\n" + "-" * 60)
     print(" Selecciona el Entorno de Escritorio / Window Manager:")
@@ -110,25 +129,50 @@ def ask_inputs():
     print("  3) Hyprland")
     print("-" * 60)
 
+    # Validar selección de escritorio
     desktop_choice = ""
     while desktop_choice not in ["1", "2", "3"]:
         desktop_choice = input("Ingresa una opción (1, 2 o 3): ").strip()
+        check_cancel(desktop_choice)
+        if desktop_choice not in ["1", "2", "3"]:
+            print("[!] Selección inválida. Por favor, ingresa 1, 2 o 3.")
 
-    username = input("\nNombre de usuario para el sistema: ").strip().lower()
+    # Validar nombre de usuario
+    while True:
+        username = input("\nNombre de usuario para el sistema: ").strip().lower()
+        check_cancel(username)
+        if not username:
+            print("[!] El nombre de usuario no puede estar vacío.")
+            continue
+        if " " in username:
+            print("[!] El nombre de usuario no debe contener espacios.")
+            continue
+        break
 
+    # Validar contraseñas
     while True:
         password = getpass.getpass("Contraseña para el usuario: ")
-        password_confirm = getpass.getpass("Confirma la contraseña: ")
-        if password == password_confirm and password != "":
-            break
-        print("[!] Las contraseñas no coinciden o están vacías. Reintenta.")
+        check_cancel(password)
+        if not password:
+            print("[!] La contraseña no puede estar vacía.")
+            continue
 
+        password_confirm = getpass.getpass("Confirma la contraseña: ")
+        check_cancel(password_confirm)
+
+        if password != password_confirm:
+            print("[!] Las contraseñas no coinciden. Reintenta.")
+            continue
+
+        break
+
+    # Confirmación final de destrucción de datos
     print("\n" + "!" * 60)
     print(f" ADVERTENCIA: Se borrarán TODOS los datos en {disk}")
     print("!" * 60)
-    confirm = input("¿Deseas continuar? (escribe 'SI' para confirmar): ")
+    confirm = input("¿Deseas continuar? (escribe 'SI' para confirmar): ").strip()
     if confirm != "SI":
-        print("Cancelando instalación.")
+        print("[!] Instalación cancelada.")
         sys.exit(0)
 
     return disk, desktop_choice, username, password
@@ -152,7 +196,6 @@ def partition_and_mount(disk):
         run(f"parted -s {disk} set 1 esp on")
         run(f"parted -s {disk} mkpart primary btrfs 1024MiB 100%")
     else:
-        # En BIOS se requiere una partición BIOS Boot para GRUB con GPT
         run(f"parted -s {disk} mkpart non-fs 1MiB 3MiB")
         run(f"parted -s {disk} set 1 bios_grub on")
         run(f"parted -s {disk} mkpart primary btrfs 3MiB 100%")
@@ -255,26 +298,24 @@ def install_base_packages(desktop_choice):
         "gzip",
     ]
 
-    # Detección dinámica de microcódigo y GPUs
     ucode_pkgs = detect_cpu_microcode()
     gpu_pkgs = detect_gpu_drivers()
 
-    # Selección según el escritorio
-    if desktop_choice == "1":  # GNOME
+    if desktop_choice == "1":
         desktop_pkgs = [
             "gnome",
             "gnome-tweaks",
             "gdm",
             "xdg-desktop-portal-gnome",
         ]
-    elif desktop_choice == "2":  # KDE Plasma
+    elif desktop_choice == "2":
         desktop_pkgs = [
             "plasma-meta",
             "kde-applications",
             "sddm",
             "xdg-desktop-portal-kde",
         ]
-    elif desktop_choice == "3":  # Hyprland
+    elif desktop_choice == "3":
         desktop_pkgs = [
             "hyprland",
             "waybar",
@@ -302,7 +343,6 @@ def install_base_packages(desktop_choice):
         "go",
     ]
 
-    # Herramientas Btrfs y recuperación
     boot_pkgs = ["grub", "efibootmgr", "snapper", "snap-pac"]
 
     all_pkgs = (
@@ -386,7 +426,7 @@ rfkill unblock wlan || true
 # Instalación Dinámica de GRUB (EFI o BIOS)
 {grub_cmd}
 
-# Configuración manual de Snapper para / (evita fallo de D-Bus en chroot)
+# Configuración manual de Snapper para /
 mkdir -p /etc/snapper/configs
 cat << 'EOF' > /etc/snapper/configs/root
 SUBVOLUME="/"
