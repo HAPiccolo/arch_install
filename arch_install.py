@@ -222,17 +222,34 @@ systemctl enable docker
 {grub_cmd}
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Configurar Snapper para la raíz
-snapper -c root create-config /
+# Configuración manual de Snapper (para evitar el error de D-Bus en chroot)
+mkdir -p /etc/snapper/configs
+cat << 'EOF' > /etc/snapper/configs/root
+SUBVOLUME="/"
+FSTYPE="btrfs"
+SPACE_LIMIT="0.5"
+FREE_LIMIT="0.2"
+ALLOW_USERS=""
+ALLOW_GROUPS=""
+SYNC_ACL="no"
+BACKGROUND_COMPARISON="yes"
+NUMBER_CLEANUP="yes"
+NUMBER_MIN_AGE="0"
+NUMBER_LIMIT_MIN="2"
+NUMBER_LIMIT_MAX="5"
+TIMELINE_CREATE="yes"
+TIMELINE_CLEANUP="yes"
+TIMELINE_MIN_AGE="1800"
+TIMELINE_LIMIT_HOURLY="0"
+TIMELINE_LIMIT_DAILY="3"
+TIMELINE_LIMIT_WEEKLY="2"
+TIMELINE_LIMIT_MONTHLY="0"
+TIMELINE_LIMIT_YEARLY="0"
+EMPTY_PRE_POST_CLEANUP="yes"
+EMPTY_PRE_POST_MIN_AGE="1800"
+EOF
 
-# Ajustar límites de snapshots para no agotar espacio
-sed -i 's/NUMBER_LIMIT_MIN="[0-9]*"/NUMBER_LIMIT_MIN="2"/' /etc/snapper/configs/root
-sed -i 's/NUMBER_LIMIT_MAX="[0-9]*"/NUMBER_LIMIT_MAX="5"/' /etc/snapper/configs/root
-sed -i 's/TIMELINE_LIMIT_HOURLY="[0-9]*"/TIMELINE_LIMIT_HOURLY="0"/' /etc/snapper/configs/root
-sed -i 's/TIMELINE_LIMIT_DAILY="[0-9]*"/TIMELINE_LIMIT_DAILY="3"/' /etc/snapper/configs/root
-sed -i 's/TIMELINE_LIMIT_WEEKLY="[0-9]*"/TIMELINE_LIMIT_WEEKLY="2"/' /etc/snapper/configs/root
-sed -i 's/TIMELINE_LIMIT_MONTHLY="[0-9]*"/TIMELINE_LIMIT_MONTHLY="0"/' /etc/snapper/configs/root
-sed -i 's/TIMELINE_LIMIT_YEARLY="[0-9]*"/TIMELINE_LIMIT_YEARLY="0"/' /etc/snapper/configs/root
+echo 'SNAPPER_CONFIGS="root"' > /etc/conf.d/snapper
 
 systemctl enable snapper-cleanup.timer
 systemctl enable snapper-timeline.timer
