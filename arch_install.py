@@ -19,7 +19,7 @@ def run(cmd, shell=False, check=True):
 def ask_inputs():
     """Solicita los datos del usuario para la instalación."""
     print("=" * 60)
-    print("  INSTALADOR AUTOMÁTICO DE ARCH LINUX + BTRFS + HYPRLAND")
+    print("  INSTALADOR AUTOMÁTICO DE ARCH LINUX + BTRFS + SNAPSHOTS")
     print("=" * 60)
 
     # Mostrar discos disponibles
@@ -34,7 +34,18 @@ def ask_inputs():
         print(f"[!] El disco {disk} no existe.")
         sys.exit(1)
 
-    username = input("Nombre de usuario para el sistema: ").strip().lower()
+    print("\n" + "-" * 60)
+    print(" Selecciona el Entorno de Escritorio / Window Manager:")
+    print("  1) GNOME")
+    print("  2) KDE Plasma")
+    print("  3) Hyprland")
+    print("-" * 60)
+
+    desktop_choice = ""
+    while desktop_choice not in ["1", "2", "3"]:
+        desktop_choice = input("Ingresa una opción (1, 2 o 3): ").strip()
+
+    username = input("\nNombre de usuario para el sistema: ").strip().lower()
 
     while True:
         password = getpass.getpass("Contraseña para el usuario: ")
@@ -51,7 +62,7 @@ def ask_inputs():
         print("Cancelando instalación.")
         sys.exit(0)
 
-    return disk, username, password
+    return disk, desktop_choice, username, password
 
 
 def partition_and_mount(disk):
@@ -113,8 +124,8 @@ def partition_and_mount(disk):
     run(f"mount -o {btrfs_opts},subvol=@pkg {p2} /mnt/var/cache/pacman/pkg")
 
 
-def install_base_packages():
-    """Instala el kernel, paquetes base, soporte de hardware y paquetes de desarrollo."""
+def install_base_packages(desktop_choice):
+    """Instala el kernel, paquetes base, entorno seleccionado y herramientas de recuperación/snapshots."""
     base_pkgs = [
         "base",
         "linux",
@@ -131,10 +142,7 @@ def install_base_packages():
     ]
 
     hardware_pkgs = [
-        "wlr-randr",
-        "kanshi",
         "brightnessctl",
-        "xdg-desktop-portal-hyprland",
         "cups",
         "cups-pdf",
         "system-config-printer",
@@ -150,17 +158,36 @@ def install_base_packages():
         "bluez-utils",
     ]
 
-    hyprland_pkgs = [
-        "hyprland",
-        "waybar",
-        "kitty",
-        "rofi-wayland",
-        "dunst",
-        "polkit-kde-agent",
-        "qt5-wayland",
-        "qt6-wayland",
-        "sddm",
-    ]
+    # Selección según el escritorio
+    if desktop_choice == "1":  # GNOME
+        desktop_pkgs = [
+            "gnome",
+            "gnome-tweaks",
+            "gdm",
+            "xdg-desktop-portal-gnome",
+        ]
+    elif desktop_choice == "2":  # KDE Plasma
+        desktop_pkgs = [
+            "plasma-meta",
+            "kde-applications",
+            "sddm",
+            "xdg-desktop-portal-kde",
+        ]
+    elif desktop_choice == "3":  # Hyprland
+        desktop_pkgs = [
+            "hyprland",
+            "waybar",
+            "kitty",
+            "rofi-wayland",
+            "dunst",
+            "polkit-kde-agent",
+            "qt5-wayland",
+            "qt6-wayland",
+            "sddm",
+            "wlr-randr",
+            "kanshi",
+            "xdg-desktop-portal-hyprland",
+        ]
 
     dev_pkgs = [
         "python",
@@ -171,12 +198,13 @@ def install_base_packages():
         "docker",
         "docker-compose",
         "code",
-        "go",  # Preinstalado para evitar que makepkg/sudo pida contraseña
+        "go",
     ]
 
+    # Herramientas Btrfs y recuperación
     boot_pkgs = ["grub", "efibootmgr", "snapper", "snap-pac"]
 
-    all_pkgs = base_pkgs + hardware_pkgs + hyprland_pkgs + dev_pkgs + boot_pkgs
+    all_pkgs = base_pkgs + hardware_pkgs + desktop_pkgs + dev_pkgs + boot_pkgs
 
     print("\n[+] Instalando paquetes en /mnt (esto puede demorar)...")
     run(["pacstrap", "-K", "/mnt"] + all_pkgs)
@@ -185,13 +213,16 @@ def install_base_packages():
     run("genfstab -U /mnt >> /mnt/etc/fstab", shell=True)
 
 
-def configure_system(username, password, disk):
+def configure_system(username, password, disk, desktop_choice):
     is_efi = os.path.exists("/sys/firmware/efi")
 
     if is_efi:
         grub_cmd = "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB"
     else:
         grub_cmd = f"grub-install --target=i386-pc {disk}"
+
+    # Determinar Display Manager según la elección
+    dm_service = "gdm" if desktop_choice == "1" else "sddm"
 
     chroot_script = f"""#!/bin/bash
 set -e
@@ -203,7 +234,7 @@ echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
 echo "es_AR.UTF-8 UTF-8" >> /etc/locale.gen
 locale-gen
 echo "LANG=es_AR.UTF-8" > /etc/locale.conf
-echo "arch-hyprland" > /etc/hostname
+echo "arch-system" > /etc/hostname
 
 # Configuración de usuarios
 echo "root:{password}" | chpasswd
@@ -215,16 +246,15 @@ echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 # Habilitar Servicios del Sistema
 systemctl enable NetworkManager
-systemctl enable sddm
+systemctl enable {dm_service}
 systemctl enable cups
 systemctl enable bluetooth
 systemctl enable docker
 
 # Instalación Dinámica de GRUB (EFI o BIOS)
 {grub_cmd}
-grub-mkconfig -o /boot/grub/grub.cfg
 
-# Configuración manual de Snapper (evita fallo de D-Bus en chroot)
+# Configuración manual de Snapper para / (evita fallo de D-Bus en chroot)
 mkdir -p /etc/snapper/configs
 cat << 'EOF' > /etc/snapper/configs/root
 SUBVOLUME="/"
@@ -232,20 +262,20 @@ FSTYPE="btrfs"
 SPACE_LIMIT="0.5"
 FREE_LIMIT="0.2"
 ALLOW_USERS=""
-ALLOW_GROUPS=""
+ALLOW_GROUPS="wheel"
 SYNC_ACL="no"
 BACKGROUND_COMPARISON="yes"
 NUMBER_CLEANUP="yes"
 NUMBER_MIN_AGE="0"
 NUMBER_LIMIT_MIN="2"
-NUMBER_LIMIT_MAX="5"
+NUMBER_LIMIT_MAX="10"
 TIMELINE_CREATE="yes"
 TIMELINE_CLEANUP="yes"
 TIMELINE_MIN_AGE="1800"
-TIMELINE_LIMIT_HOURLY="0"
-TIMELINE_LIMIT_DAILY="3"
-TIMELINE_LIMIT_WEEKLY="2"
-TIMELINE_LIMIT_MONTHLY="0"
+TIMELINE_LIMIT_HOURLY="5"
+TIMELINE_LIMIT_DAILY="7"
+TIMELINE_LIMIT_WEEKLY="4"
+TIMELINE_LIMIT_MONTHLY="12"
 TIMELINE_LIMIT_YEARLY="0"
 EMPTY_PRE_POST_CLEANUP="yes"
 EMPTY_PRE_POST_MIN_AGE="1800"
@@ -253,20 +283,23 @@ EOF
 
 echo 'SNAPPER_CONFIGS="root"' > /etc/conf.d/snapper
 
+# Habilitar timers de Snapper para snapshots periódicos y limpieza
 systemctl enable snapper-cleanup.timer
 systemctl enable snapper-timeline.timer
 
-# Compilación e instalación de yay y grub-btrfs como usuario común
+# Compilación e instalación de yay y grub-btrfs desde el AUR
 su - {username} -c "
 git clone https://aur.archlinux.org/yay.git /tmp/yay && \
 cd /tmp/yay && \
 makepkg -si --noconfirm
 "
 su - {username} -c "yay -S --noconfirm grub-btrfs"
+
+# Habilitar el daemon de grub-btrfs para actualizar GRUB automáticamente en cada snapshot
 systemctl enable grub-btrfsd
 
-# Limpieza del permiso sudo temporal
-rm -f /etc/sudoers.d/99-temp-{username}
+# Regenerar configuración de GRUB incorporando grub-btrfs
+grub-mkconfig -o /boot/grub/grub.cfg
 """
 
     with open("/mnt/setup.sh", "w") as f:
@@ -283,13 +316,14 @@ def main():
         print("[!] Este script debe ejecutarse con permisos de ROOT.")
         sys.exit(1)
 
-    disk, username, password = ask_inputs()
+    disk, desktop_choice, username, password = ask_inputs()
     partition_and_mount(disk)
-    install_base_packages()
-    configure_system(username, password, disk)
+    install_base_packages(desktop_choice)
+    configure_system(username, password, disk, desktop_choice)
 
     print("\n" + "=" * 60)
     print(" ¡INSTALACIÓN COMPLETADA CON ÉXITO!")
+    print(" Sistema listo con Snapshots automáticas Btrfs y menú en GRUB.")
     print(" Puedes desmontar la partición y reiniciar con: umount -R /mnt && reboot")
     print("=" * 60)
 
