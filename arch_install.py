@@ -232,6 +232,7 @@ def install_base_packages(desktop_choice):
         "wireplumber",
         "bluez",
         "bluez-utils",
+        "power-profiles-daemon",
     ]
 
     media_and_fonts = [
@@ -376,6 +377,7 @@ systemctl enable {dm_service}
 systemctl enable cups
 systemctl enable bluetooth
 systemctl enable docker
+systemctl enable power-profiles-daemon
 
 # Desbloqueo por software de adaptadores de radio (Bluetooth / Wi-Fi)
 rfkill unblock bluetooth || true
@@ -417,13 +419,13 @@ echo 'SNAPPER_CONFIGS="root"' > /etc/conf.d/snapper
 systemctl enable snapper-cleanup.timer
 systemctl enable snapper-timeline.timer
 
-# Compilación e instalación de yay y grub-btrfs desde el AUR
+# Compilación e instalación de yay, grub-btrfs y btrfs-assistant desde el AUR
 su - {username} -c "
 git clone https://aur.archlinux.org/yay.git /tmp/yay && \
 cd /tmp/yay && \
 makepkg -si --noconfirm
 "
-su - {username} -c "yay -S --noconfirm grub-btrfs"
+su - {username} -c "yay -S --noconfirm grub-btrfs btrfs-assistant"
 
 # Habilitar el daemon de grub-btrfs para actualizar GRUB automáticamente en cada snapshot
 systemctl enable grub-btrfsd
