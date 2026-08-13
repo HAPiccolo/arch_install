@@ -55,29 +55,34 @@ def ask_inputs():
 
 
 def partition_and_mount(disk):
-    """Crea la tabla GPT, particiones FAT32/Btrfs y subvolúmenes."""
-    # Nombres de partición para sda (sda1, sda2) vs nvme0n1 (nvme0n1p1, nvme0n1p2)
+    is_efi = os.path.exists("/sys/firmware/efi")
     p1 = f"{disk}p1" if "nvme" in disk or "mmcblk" in disk else f"{disk}1"
     p2 = f"{disk}p2" if "nvme" in disk or "mmcblk" in disk else f"{disk}2"
 
     print("\n[+] Limpiando y particionando el disco...")
     run(f"sgdisk --zap-all {disk}")
     run(f"parted -s {disk} mklabel gpt")
-    run(f"parted -s {disk} mkpart ESP fat32 1MiB 1024MiB")
-    run(f"parted -s {disk} set 1 esp on")
-    run(f"parted -s {disk} mkpart primary btrfs 1024MiB 100%")
 
-    # Forzar actualización de tabla de particiones
-    run("partprobe")
+    if is_efi:
+        run(f"parted -s {disk} mkpart ESP fat32 1MiB 1024MiB")
+        run(f"parted -s {disk} set 1 esp on")
+        run(f"parted -s {disk} mkpart primary btrfs 1024MiB 100%")
+    else:
+        # En BIOS necesitamos una partición BIOS Boot para GRUB en tablas GPT
+        run(f"parted -s {disk} mkpart non-fs 1MiB 3MiB")
+        run(f"parted -s {disk} set 1 bios_grub on")
+        run(f"parted -s {disk} mkpart primary btrfs 3MiB 100%")
+
+    run(f"partprobe {disk}", check=False)
 
     print("\n[+] Formateando particiones...")
-    run(f"mkfs.fat -F32 {p1}")
+    if is_efi:
+        run(f"mkfs.fat -F32 {p1}")
     run(f"mkfs.btrfs -f {p2}")
 
     print("\n[+] Creando subvolúmenes Btrfs...")
     run(f"mount {p2} /mnt")
-    subvols = ["@", "@home", "@snapshots", "@log", "@pkg"]
-    for sub in subvols:
+    for sub in ["@", "@home", "@snapshots", "@log", "@pkg"]:
         run(f"btrfs subvolume create /mnt/{sub}")
     run("umount /mnt")
 
@@ -95,7 +100,9 @@ def partition_and_mount(disk):
     for d in directories:
         os.makedirs(d, exist_ok=True)
 
-    run(f"mount {p1} /mnt/boot")
+    if is_efi:
+        run(f"mount {p1} /mnt/boot")
+
     run(f"mount -o {btrfs_opts},subvol=@home {p2} /mnt/home")
     run(f"mount -o {btrfs_opts},subvol=@snapshots {p2} /mnt/.snapshots")
     run(f"mount -o {btrfs_opts},subvol=@log {p2} /mnt/var/log")
@@ -180,8 +187,14 @@ def install_base_packages():
     run("genfstab -U /mnt >> /mnt/etc/fstab", shell=True)
 
 
-def configure_system(username, password):
-    """Configura el sistema dentro del entorno chroot."""
+def configure_system(username, password, disk):
+    is_efi = os.path.exists("/sys/firmware/efi")
+
+    if is_efi:
+        grub_cmd = "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB"
+    else:
+        grub_cmd = f"grub-install --target=i386-pc {disk}"
+
     chroot_script = f"""#!/bin/bash
 set -e
 
@@ -207,14 +220,14 @@ systemctl enable cups
 systemctl enable bluetooth
 systemctl enable docker
 
-# Instalación de GRUB
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+# Instalación Dinámica de GRUB (EFI o BIOS)
+{grub_cmd}
 grub-mkconfig -o /boot/grub/grub.cfg
 
 # Configurar Snapper para la raíz
 snapper -c root create-config /
 
-# Ajustar límites de snapshots en /etc/snapper/configs/root para evitar espacio lleno
+# Ajustar límites de snapshots
 sed -i 's/NUMBER_LIMIT_MIN="[0-9]*"/NUMBER_LIMIT_MIN="2"/' /etc/snapper/configs/root
 sed -i 's/NUMBER_LIMIT_MAX="[0-9]*"/NUMBER_LIMIT_MAX="5"/' /etc/snapper/configs/root
 sed -i 's/TIMELINE_LIMIT_HOURLY="[0-9]*"/TIMELINE_LIMIT_HOURLY="0"/' /etc/snapper/configs/root
@@ -226,7 +239,7 @@ sed -i 's/TIMELINE_LIMIT_YEARLY="[0-9]*"/TIMELINE_LIMIT_YEARLY="0"/' /etc/snappe
 systemctl enable snapper-cleanup.timer
 systemctl enable snapper-timeline.timer
 
-# Compilación e instalación de yay (AUR helper) y grub-btrfs para arranque directo desde snapshots
+# Compilación de yay y grub-btrfs
 su - {username} -c "
 git clone https://aur.archlinux.org/yay.git /tmp/yay && \
 cd /tmp/yay && \
@@ -253,7 +266,7 @@ def main():
     disk, username, password = ask_inputs()
     partition_and_mount(disk)
     install_base_packages()
-    configure_system(username, password)
+    configure_system(username, password, disk)  # <-- Se pasa 'disk' aquí
 
     print("\n" + "=" * 60)
     print(" ¡INSTALACIÓN COMPLETADA CON ÉXITO!")
