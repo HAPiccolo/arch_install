@@ -26,7 +26,7 @@ def ask_inputs():
     run("lsblk -d -n -o NAME,SIZE,TYPE,MODEL")
     print("-" * 60)
 
-    disk = input("Ingresa el disco a formatear (ejemplo: sda, nvme0n1): ").strip()
+    disk = input("Ingresa el disco a formatear (ejemplo: sda, nvme0n1, vda): ").strip()
     if not disk.startswith("/dev/"):
         disk = f"/dev/{disk}"
 
@@ -59,6 +59,10 @@ def partition_and_mount(disk):
     p1 = f"{disk}p1" if "nvme" in disk or "mmcblk" in disk else f"{disk}1"
     p2 = f"{disk}p2" if "nvme" in disk or "mmcblk" in disk else f"{disk}2"
 
+    print("\n[+] Desmontando /mnt por si hay ejecuciones previas...")
+    run("umount -R /mnt", check=False)
+    run("swapoff -a", check=False)
+
     print("\n[+] Limpiando y particionando el disco...")
     run(f"sgdisk --zap-all {disk}")
     run(f"parted -s {disk} mklabel gpt")
@@ -73,6 +77,7 @@ def partition_and_mount(disk):
         run(f"parted -s {disk} set 1 bios_grub on")
         run(f"parted -s {disk} mkpart primary btrfs 3MiB 100%")
 
+    # Forzar actualización ignorando errores en lecturas de CD-ROM /dev/sr0
     run(f"partprobe {disk}", check=False)
 
     print("\n[+] Formateando particiones...")
@@ -123,24 +128,20 @@ def install_base_packages():
         "curl",
         "wget",
         "base-devel",
-        "pacman-contrib",  # Incluye paccache
+        "pacman-contrib",
     ]
 
-    # Hardware, Pantallas (Wayland/Hyprland), Impresoras, Escáneres
     hardware_pkgs = [
-        # Control de monitores y gestión de pantalla
         "wlr-randr",
         "kanshi",
         "brightnessctl",
         "xdg-desktop-portal-hyprland",
-        # Impresión y escaneo
         "cups",
         "cups-pdf",
         "system-config-printer",
         "sane",
         "simple-scan",
-        "hplip",  # Soporte amplio de impresoras
-        # Audio y Bluetooth
+        "hplip",
         "pipewire",
         "pipewire-alsa",
         "pipewire-pulse",
@@ -150,7 +151,6 @@ def install_base_packages():
         "bluez-utils",
     ]
 
-    # Hyprland y entorno gráfico básico
     hyprland_pkgs = [
         "hyprland",
         "waybar",
@@ -163,7 +163,6 @@ def install_base_packages():
         "sddm",
     ]
 
-    # Herramientas para Desarrolladores
     dev_pkgs = [
         "python",
         "python-pip",
@@ -172,10 +171,9 @@ def install_base_packages():
         "cmake",
         "docker",
         "docker-compose",
-        "code",  # VS Code (build de Arch)
+        "code",
     ]
 
-    # Carga de arranque y snapshots
     boot_pkgs = ["grub", "efibootmgr", "snapper", "snap-pac"]
 
     all_pkgs = base_pkgs + hardware_pkgs + hyprland_pkgs + dev_pkgs + boot_pkgs
@@ -227,7 +225,7 @@ grub-mkconfig -o /boot/grub/grub.cfg
 # Configurar Snapper para la raíz
 snapper -c root create-config /
 
-# Ajustar límites de snapshots
+# Ajustar límites de snapshots para no agotar espacio
 sed -i 's/NUMBER_LIMIT_MIN="[0-9]*"/NUMBER_LIMIT_MIN="2"/' /etc/snapper/configs/root
 sed -i 's/NUMBER_LIMIT_MAX="[0-9]*"/NUMBER_LIMIT_MAX="5"/' /etc/snapper/configs/root
 sed -i 's/TIMELINE_LIMIT_HOURLY="[0-9]*"/TIMELINE_LIMIT_HOURLY="0"/' /etc/snapper/configs/root
@@ -266,7 +264,7 @@ def main():
     disk, username, password = ask_inputs()
     partition_and_mount(disk)
     install_base_packages()
-    configure_system(username, password, disk)  # <-- Se pasa 'disk' aquí
+    configure_system(username, password, disk)
 
     print("\n" + "=" * 60)
     print(" ¡INSTALACIÓN COMPLETADA CON ÉXITO!")
