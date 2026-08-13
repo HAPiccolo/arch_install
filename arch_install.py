@@ -209,10 +209,9 @@ echo "arch-hyprland" > /etc/hostname
 echo "root:{password}" | chpasswd
 useradd -m -G wheel,docker,lp,scanner -s /bin/bash {username}
 echo "{username}:{password}" | chpasswd
-echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
 
-# Permitir sudo temporal sin contraseña para la compilación de AUR en chroot
-echo "{username} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-temp-{username}
+# Permitir a los miembros del grupo wheel ejecutar sudo sin contraseña
+echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 # Habilitar Servicios del Sistema
 systemctl enable NetworkManager
