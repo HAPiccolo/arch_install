@@ -72,12 +72,11 @@ def partition_and_mount(disk):
         run(f"parted -s {disk} set 1 esp on")
         run(f"parted -s {disk} mkpart primary btrfs 1024MiB 100%")
     else:
-        # En BIOS necesitamos una partición BIOS Boot para GRUB en tablas GPT
+        # En BIOS se requiere una partición BIOS Boot para GRUB con GPT
         run(f"parted -s {disk} mkpart non-fs 1MiB 3MiB")
         run(f"parted -s {disk} set 1 bios_grub on")
         run(f"parted -s {disk} mkpart primary btrfs 3MiB 100%")
 
-    # Forzar actualización ignorando errores en lecturas de CD-ROM /dev/sr0
     run(f"partprobe {disk}", check=False)
 
     print("\n[+] Formateando particiones...")
@@ -172,13 +171,14 @@ def install_base_packages():
         "docker",
         "docker-compose",
         "code",
+        "go",  # Preinstalado para evitar que makepkg/sudo pida contraseña
     ]
 
     boot_pkgs = ["grub", "efibootmgr", "snapper", "snap-pac"]
 
     all_pkgs = base_pkgs + hardware_pkgs + hyprland_pkgs + dev_pkgs + boot_pkgs
 
-    print("\n[+] Instalando paquetes en /mnt (esto puede demorar unos minutos)...")
+    print("\n[+] Instalando paquetes en /mnt (esto puede demorar)...")
     run(["pacstrap", "-K", "/mnt"] + all_pkgs)
 
     print("\n[+] Generando fstab...")
@@ -211,6 +211,9 @@ useradd -m -G wheel,docker,lp,scanner -s /bin/bash {username}
 echo "{username}:{password}" | chpasswd
 echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
 
+# Permitir sudo temporal sin contraseña para la compilación de AUR en chroot
+echo "{username} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-temp-{username}
+
 # Habilitar Servicios del Sistema
 systemctl enable NetworkManager
 systemctl enable sddm
@@ -222,7 +225,7 @@ systemctl enable docker
 {grub_cmd}
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Configuración manual de Snapper (para evitar el error de D-Bus en chroot)
+# Configuración manual de Snapper (evita fallo de D-Bus en chroot)
 mkdir -p /etc/snapper/configs
 cat << 'EOF' > /etc/snapper/configs/root
 SUBVOLUME="/"
@@ -254,14 +257,17 @@ echo 'SNAPPER_CONFIGS="root"' > /etc/conf.d/snapper
 systemctl enable snapper-cleanup.timer
 systemctl enable snapper-timeline.timer
 
-# Compilación de yay y grub-btrfs
+# Compilación e instalación de yay y grub-btrfs como usuario común
 su - {username} -c "
 git clone https://aur.archlinux.org/yay.git /tmp/yay && \
 cd /tmp/yay && \
 makepkg -si --noconfirm
 "
-yay -S --noconfirm grub-btrfs
+su - {username} -c "yay -S --noconfirm grub-btrfs"
 systemctl enable grub-btrfsd
+
+# Limpieza del permiso sudo temporal
+rm -f /etc/sudoers.d/99-temp-{username}
 """
 
     with open("/mnt/setup.sh", "w") as f:
