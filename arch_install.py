@@ -91,8 +91,8 @@ def ask_inputs():
     print("  INSTALADOR AUTOMÁTICO DE ARCH LINUX + BTRFS + SNAPSHOTS")
     print("=" * 60)
 
-    # Mostrar discos disponibles
-    run("lsblk -d -n -o NAME,SIZE,TYPE,MODEL")
+    # Mostrar discos y particiones disponibles claramente
+    print(run("lsblk -o NAME,SIZE,TYPE,FSTYPE,MODEL"))
     print("-" * 60)
 
     disk = input("Ingresa el disco a formatear (ejemplo: sda, nvme0n1, vda): ").strip()
